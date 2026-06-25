@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TypiAI" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#6750A4</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+    <style name="Theme.TypiAI.SplashScreen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#6750A4</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.TypiAI</item>
+    </style>
+</resources>

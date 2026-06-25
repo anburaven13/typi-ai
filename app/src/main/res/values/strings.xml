@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TypiAI</string>
+    <string name="accessibility_service_description">TypiAI monitors text input to detect AI commands like @fix, @emoji, @translate, and more. When a command is detected, it uses Gemini AI to transform your text.</string>
+    <string name="accessibility_service_summary">AI-powered text transformation via keyboard commands</string>
+</resources>
