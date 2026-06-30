@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        API 31+ (Android 12+) override — adds the native splash screen
+        window attributes that only exist from API 31 onwards.
+    -->
+    <style name="Theme.TypiAI" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowSplashScreenBackground">#6750A4</item>
+    </style>
+</resources>

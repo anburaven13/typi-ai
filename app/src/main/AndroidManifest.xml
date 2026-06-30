@@ -1,13 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    TypiAI — AndroidManifest.xml
+    ════════════════════════════════════════════════════════════════════════════
+    Android 11 (API 30) compatibility notes
+    ────────────────────────────────────────
+    1. android:exported — mandatory on API 30+ for every <activity> and
+       <service> that declares an <intent-filter>.  Omitting it causes an
+       INSTALL_PARSE_FAILED_MANIFEST_MALFORMED error on Android 11+.
+
+    2. Package visibility (android:queries) — on Android 11+ apps cannot
+       see other packages by default.  We don't query external packages,
+       but Settings.ACTION_ACCESSIBILITY_SETTINGS is a system intent and
+       does not require a <queries> entry.
+
+    3. Cleartext traffic — disabled via network_security_config; all Gemini
+       API calls go over HTTPS.
+    ════════════════════════════════════════════════════════════════════════════
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Internet permission for Gemini API calls -->
+    <!-- ── Networking ──────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Bind accessibility service permission -->
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
+    <!-- ── Accessibility (system-only permission) ───────────────────────────
+         tools:ignore prevents the "ProtectedPermissions" lint warning; the
+         permission itself is granted exclusively by the OS when the user
+         enables the service in Settings → Accessibility.
+    ───────────────────────────────────────────────────────────────────────── -->
+    <uses-permission
+        android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
 
     <application
@@ -20,25 +43,39 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TypiAI.SplashScreen"
         android:networkSecurityConfig="@xml/network_security_config"
-        tools:targetApi="34">
+        tools:targetApi="35">
 
-        <!-- Main Activity -->
+        <!-- ── Main Activity ──────────────────────────────────────────────────
+             android:exported="true" is required on API 30+ for any activity
+             with an <intent-filter>.  The OS uses it to launch the app.
+             android:windowSoftInputMode="adjustResize" ensures the Compose
+             layout shrinks properly when the soft keyboard is visible.
+        ─────────────────────────────────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.TypiAI.SplashScreen"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- TypiAI Accessibility Service -->
+        <!-- ── TypiAI Accessibility Service ───────────────────────────────────
+             android:exported="true"  — required on API 30+ for services with
+               intent-filters; the Accessibility Manager must be able to bind
+               this service.
+             android:permission       — restricts binding to the OS only,
+               preventing third-party apps from binding the service directly.
+             Together these two attributes satisfy the Android 11 security model.
+        ─────────────────────────────────────────────────────────────────── -->
         <service
             android:name=".accessibility.TypiAccessibilityService"
             android:exported="true"
             android:label="@string/app_name"
+            android:description="@string/accessibility_service_description"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

@@ -1,129 +1,67 @@
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.npm
-.yarn-integrity
-*.tgz
-package-lock.json
-yarn.lock
-.pnpm-debug.log*
+# ════════════════════════════════════════════════════════════════════
+# TypiAI — .gitignore
+# ════════════════════════════════════════════════════════════════════
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# ── Gradle build outputs ─────────────────────────────────────────────
+.gradle/
 build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+*/build/
+**/build/
 
-# Virtual Environments
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-.venv/
+# ── Android build artefacts ──────────────────────────────────────────
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
 
-# IDEs and Editors
-.vscode/
+# ProGuard mapping — keep if you publish to Play Store (optional)
+# Uncomment to track obfuscated crash stacks:
+# !app/build/outputs/mapping/release/mapping.txt
+
+# ── Local configuration ──────────────────────────────────────────────
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# ── IntelliJ / Android Studio ────────────────────────────────────────
 .idea/
-*.swp
-*.swo
-*.swn
+*.iml
+*.ipr
+*.iws
 .DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ── Kotlin/JVM ───────────────────────────────────────────────────────
+*.kotlin_module
+
+# ── OS junk ──────────────────────────────────────────────────────────
 Thumbs.db
-*~
-.project
-.classpath
-.settings/
-*.sublime-*
-
-# Logs
-logs/
-*.log
-log/
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-.env.development
-.env.test
-.env.production
-
-# Build outputs
-/out
-/target
-/.next
-/.nuxt
-/dist
-/build
-/.cache
-
-# Testing
-/coverage
-/.nyc_output
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
-*.bak
-*.backup
-*.old
-
-# Database
-*.sqlite
-*.sqlite3
-*.db
-
-# OS Files
-.DS_Store
-.DS_Store?
-._*
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
 
-# Docker
-Dockerfile.local
-docker-compose.override.yml
+# ── Lint ─────────────────────────────────────────────────────────────
+lint/
+lint.xml
+build/reports/
 
-# Misc
-*.pid
-*.seed
-*.pid.lock
-.grunt
-.lock-wscript
+# ── Test results ─────────────────────────────────────────────────────
+test-results/
+jacoco/
 
+# ── Secrets (never commit!) ───────────────────────────────────────────
+google-services.json
+*.env
+secrets.properties
+
+# ── NDK ──────────────────────────────────────────────────────────────
+obj/
+
+# ── Generated sources ────────────────────────────────────────────────
+generated/

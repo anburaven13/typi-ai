@@ -1,12 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    themes.xml
+    Android 11 (API 30) compatibility:
+    - Base "Theme.TypiAI" has NO windowSplashScreen* attrs (those are API 31+).
+    - "Theme.TypiAI.SplashScreen" uses core-splashscreen compat (works API 23+).
+    - postSplashScreenTheme switches back to base theme after splash.
+-->
 <resources>
+
     <style name="Theme.TypiAI" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowSplashScreenBackground">#6750A4</item>
         <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
     </style>
+
     <style name="Theme.TypiAI.SplashScreen" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#6750A4</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/Theme.TypiAI</item>
     </style>
+
 </resources>

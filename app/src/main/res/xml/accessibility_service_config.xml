@@ -1,4 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    accessibility_service_config.xml
+    ════════════════════════════════════════════════════════════════════════════
+    Android 11 (API 30) compatibility notes
+    ────────────────────────────────────────
+    • android:canRetrieveWindowContent="true" — required to read text from the
+      active window; declared here AND via FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+      in code for maximum compatibility.
+
+    • android:canRequestFilterKeyEvents="true" — lets us intercept key events;
+      also set programmatically via FLAG_REQUEST_FILTER_KEY_EVENTS.
+
+    • android:accessibilityFlags — "flagRetrieveInteractiveWindows" (0x40) and
+      "flagRequestFilterKeyEvents" (0x20) mirror the programmatic flags.
+
+    • android:settingsActivity — links to the in-app settings page shown in
+      Android Settings → Accessibility → TypiAI.
+
+    • android:summary — one-line description shown below the service name in
+      the Accessibility settings list (API 26+).
+    ════════════════════════════════════════════════════════════════════════════
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeViewTextChanged|typeViewFocused"
     android:accessibilityFeedbackType="feedbackGeneric"
