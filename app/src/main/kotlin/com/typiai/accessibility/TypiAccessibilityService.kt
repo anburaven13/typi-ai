@@ -248,8 +248,8 @@ class TypiAccessibilityService : AccessibilityService() {
     // Node helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun findFocusedEditText(): AccessibilityNodeInfo? =
-        try {
+    private fun findFocusedEditText(): AccessibilityNodeInfo? {
+        return try {
             val root = rootInActiveWindow ?: return null
             // Fast path: use the accessibility-focus API
             val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -261,6 +261,7 @@ class TypiAccessibilityService : AccessibilityService() {
             Log.w(TAG, "findFocusedEditText: ${e.message}")
             null
         }
+    }
 
     private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isEditable && node.isFocused) return node
