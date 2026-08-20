@@ -60,12 +60,11 @@ class GeminiHelper(private val apiKey: String) {
             }
 
             val inputText = text.take(MAX_INPUT_LENGTH)
-            val prompt = buildPrompt(inputText, command)
             val startTime = System.currentTimeMillis()
 
             var lastError: GeminiResult.Error? = null
             for (attempt in 0 until MAX_RETRIES) {
-                val result = tryRequest(prompt, attempt)
+                val result = tryRequest(inputText, attempt, command)
                 when (result) {
                     is GeminiResult.Success -> {
                         val elapsed = System.currentTimeMillis() - startTime
@@ -86,9 +85,9 @@ class GeminiHelper(private val apiKey: String) {
             lastError ?: GeminiResult.Error("Unknown error after retries")
         }
 
-    private suspend fun tryRequest(prompt: String, attempt: Int): GeminiResult {
+    private suspend fun tryRequest(prompt: String, attempt: Int, command: TriggerCommand): GeminiResult {
         return try {
-            val requestBody = buildRequestBody(prompt)
+            val requestBody = buildRequestBody(prompt, command)
             val url = "$BASE_URL/models/$currentModel:generateContent?key=$apiKey"
             val request = Request.Builder()
                 .url(url)
@@ -146,24 +145,33 @@ class GeminiHelper(private val apiKey: String) {
         }
     }
 
-    private fun buildPrompt(text: String, command: TriggerCommand): String {
-        return "${command.prompt}$text"
-    }
+    private fun buildRequestBody(userText: String, command: TriggerCommand): String {
+        // System instruction sent separately; user content = command prompt + user text
+        val systemInstruction = command.systemInstruction
+        val userContent = "${command.prompt}$userText"
 
-    private fun buildRequestBody(prompt: String): String {
-        return gson.toJson(mapOf(
-            "contents" to listOf(
+        val contents = if (systemInstruction.isNotBlank()) {
+            listOf(
                 mapOf(
-                    "parts" to listOf(
-                        mapOf("text" to prompt)
-                    )
+                    "role" to "user",
+                    "parts" to listOf(mapOf("text" to userContent))
                 )
-            ),
+            )
+        } else {
+            listOf(
+                mapOf(
+                    "parts" to listOf(mapOf("text" to userContent))
+                )
+            )
+        }
+
+        val body = mutableMapOf<String, Any>(
+            "contents" to contents,
             "generationConfig" to mapOf(
-                "temperature" to 0.7,
+                "temperature" to command.temperature,
                 "topK" to 40,
                 "topP" to 0.95,
-                "maxOutputTokens" to 2048,
+                "maxOutputTokens" to command.maxTokens,
                 "candidateCount" to 1
             ),
             "safetySettings" to listOf(
@@ -172,7 +180,15 @@ class GeminiHelper(private val apiKey: String) {
                 mapOf("category" to "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" to "BLOCK_ONLY_HIGH"),
                 mapOf("category" to "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" to "BLOCK_ONLY_HIGH")
             )
-        ))
+        )
+
+        if (systemInstruction.isNotBlank()) {
+            body["systemInstruction"] = mapOf(
+                "parts" to listOf(mapOf("text" to systemInstruction))
+            )
+        }
+
+        return gson.toJson(body)
     }
 
     private fun parseSuccessResponse(responseBody: String): GeminiResult {

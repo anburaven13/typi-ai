@@ -4,6 +4,7 @@ import android.content.Context
 import com.typiai.ai.GeminiHelper
 import com.typiai.data.PreferencesDataStore
 import com.typiai.domain.GeminiResult
+import com.typiai.domain.HistoryEntry
 import com.typiai.domain.TriggerCommand
 import com.typiai.domain.UsageStats
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +19,9 @@ class TypiRepository(private val context: Context) {
     val usageStatsFlow: Flow<UsageStats> = dataStore.usageStatsFlow
     val darkModeFlow: Flow<Boolean> = dataStore.darkModeFlow
     val dynamicColorFlow: Flow<Boolean> = dataStore.dynamicColorFlow
+    val notificationsEnabledFlow: Flow<Boolean> = dataStore.notificationsEnabledFlow
+    val debounceMsFlow: Flow<Int> = dataStore.debounceMsFlow
+    val historyFlow: Flow<List<HistoryEntry>> = dataStore.historyFlow
 
     private suspend fun getHelper(): GeminiHelper? {
         val apiKey = dataStore.apiKeyFlow.first()
@@ -36,7 +40,11 @@ class TypiRepository(private val context: Context) {
         } else false
     }
 
-    suspend fun processText(text: String, command: TriggerCommand): GeminiResult {
+    suspend fun processText(
+        text: String,
+        command: TriggerCommand,
+        recordHistory: Boolean = true
+    ): GeminiResult {
         val helper = getHelper()
             ?: return GeminiResult.Error(
                 "No API key configured. Please add your Gemini API key in the Dashboard.",
@@ -46,10 +54,14 @@ class TypiRepository(private val context: Context) {
         val result = helper.processText(text, command)
         val success = result is GeminiResult.Success
         val responseTime = if (result is GeminiResult.Success) result.responseTimeMs else 0L
+        val outputText = if (result is GeminiResult.Success) result.text else ""
+
         dataStore.recordRequest(
             success = success,
             command = command.trigger,
-            responseTimeMs = responseTime
+            responseTimeMs = responseTime,
+            inputText = if (recordHistory) text else "",
+            outputText = if (recordHistory) outputText else ""
         )
         return result
     }
@@ -67,7 +79,10 @@ class TypiRepository(private val context: Context) {
 
     suspend fun setDarkMode(enabled: Boolean) = dataStore.setDarkMode(enabled)
     suspend fun setDynamicColor(enabled: Boolean) = dataStore.setDynamicColor(enabled)
+    suspend fun setNotificationsEnabled(enabled: Boolean) = dataStore.setNotificationsEnabled(enabled)
+    suspend fun setDebounceMs(ms: Int) = dataStore.setDebounceMs(ms)
     suspend fun clearUsageData() = dataStore.clearAllData()
+    suspend fun clearHistory() = dataStore.clearHistory()
 
     fun getCurrentModel(): String = geminiHelper?.getCurrentModel() ?: "gemini-2.5-flash"
 }

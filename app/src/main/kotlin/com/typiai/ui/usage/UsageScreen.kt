@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.typiai.domain.TriggerCommand
 import com.typiai.viewmodel.UsageViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -156,6 +157,11 @@ fun UsageScreen(
                 lastCommand = stats.lastCommand,
                 totalRequests = stats.totalRequests
             )
+
+            // Average response time
+            if (stats.totalRequests > 0) {
+                AvgResponseTimeCard(avgMs = stats.averageResponseTimeMs)
+            }
 
             // Rate Limit Info Card
             RateLimitCard()
@@ -341,8 +347,8 @@ fun DetailsCard(
             )
             DetailRow(
                 icon = Icons.Default.Calculate,
-                label = "Avg per Day",
-                value = if (totalRequests > 0) "~$totalRequests requests" else "No data"
+                label = "Total Requests",
+                value = if (totalRequests > 0) "$totalRequests" else "No data"
             )
         }
     }
@@ -375,6 +381,56 @@ fun DetailRow(icon: ImageVector, label: String, value: String) {
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+@Composable
+fun AvgResponseTimeCard(avgMs: Long) {
+    val formatted = when {
+        avgMs <= 0L -> "N/A"
+        avgMs < 1000L -> "${avgMs}ms"
+        else -> "${"%.1f".format(avgMs / 1000.0)}s"
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(20.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Timer,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Avg Response Time",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "Per successful AI request",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                )
+            }
+            Text(
+                text = formatted,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
     }
 }
 

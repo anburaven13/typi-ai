@@ -8,9 +8,13 @@ data class UsageStats(
     val lastRequestTime: Long = 0L,
     val lastUsedDate: String = "",
     val lastCommand: String = "",
-    val averageResponseTimeMs: Long = 0L
+    val totalResponseTimeMs: Long = 0L
 ) {
     val successRate: Float
         get() = if (totalRequests == 0) 0f
         else (successfulRequests.toFloat() / totalRequests.toFloat()) * 100f
+
+    val averageResponseTimeMs: Long
+        get() = if (successfulRequests == 0) 0L
+        else totalResponseTimeMs / successfulRequests
 }

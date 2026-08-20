@@ -8,14 +8,18 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.typiai.ui.dashboard.DashboardScreen
+import com.typiai.ui.history.HistoryScreen
+import com.typiai.ui.settings.SettingsScreen
 import com.typiai.ui.usage.UsageScreen
 
 sealed class Screen(val route: String, val title: String, val iconName: String) {
     object Dashboard : Screen("dashboard", "Dashboard", "dashboard")
-    object Usage : Screen("usage", "Usage", "bar_chart")
+    object Usage     : Screen("usage",     "Usage",     "bar_chart")
+    object History   : Screen("history",   "History",   "history")
+    object Settings  : Screen("settings",  "Settings",  "settings")
 }
 
-val bottomNavItems = listOf(Screen.Dashboard, Screen.Usage)
+val bottomNavItems = listOf(Screen.Dashboard, Screen.Usage, Screen.History, Screen.Settings)
 
 @Composable
 fun TypiNavGraph(
@@ -51,11 +55,9 @@ fun TypiNavGraph(
             )
         }
     ) {
-        composable(Screen.Dashboard.route) {
-            DashboardScreen()
-        }
-        composable(Screen.Usage.route) {
-            UsageScreen()
-        }
+        composable(Screen.Dashboard.route) { DashboardScreen() }
+        composable(Screen.Usage.route)     { UsageScreen() }
+        composable(Screen.History.route)   { HistoryScreen() }
+        composable(Screen.Settings.route)  { SettingsScreen() }
     }
 }

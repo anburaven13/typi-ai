@@ -20,7 +20,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -41,10 +46,22 @@ fun DashboardScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val clipboard = LocalClipboardManager.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Refresh service status on composition
-    LaunchedEffect(Unit) {
-        viewModel.updateServiceStatus(context)
+    // Re-check accessibility service status every time the screen resumes.
+    // This fires immediately on first composition AND again whenever the user
+    // returns from Android Settings — fixing the "still shows disabled" bug.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.updateServiceStatus(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     // Handle snackbar messages
@@ -93,6 +110,11 @@ fun DashboardScreen(
                 onTest = viewModel::testApiKey
             )
 
+            // Onboarding banner when no API key is set
+            if (uiState.apiKey.isBlank()) {
+                OnboardingBanner(onSetupClick = { /* scroll to api key card — focus handled */ })
+            }
+
             // Playground Card
             PlaygroundCard(
                 input = uiState.playgroundInput,
@@ -103,13 +125,54 @@ fun DashboardScreen(
                 onInputChange = viewModel::updatePlaygroundInput,
                 onCommandSelect = viewModel::selectCommand,
                 onRun = viewModel::runPlayground,
-                onClear = viewModel::clearPlayground
+                onClear = viewModel::clearPlayground,
+                onCopyOutput = {
+                    clipboard.setText(AnnotatedString(uiState.playgroundOutput))
+                    viewModel.showSnackbar("Output copied to clipboard")
+                }
             )
 
             // Commands List Card
             CommandsCard()
 
             Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+fun OnboardingBanner(onSetupClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.AutoAwesome,
+                null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Welcome to TypiAI!",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    text = "Add your Gemini API key below to get started. Then enable the accessibility service.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                )
+            }
         }
     }
 }
@@ -434,7 +497,8 @@ fun PlaygroundCard(
     onInputChange: (String) -> Unit,
     onCommandSelect: (TriggerCommand) -> Unit,
     onRun: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onCopyOutput: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -494,7 +558,22 @@ fun PlaygroundCard(
                 label = { Text("Input text") },
                 placeholder = { Text("Type or paste text to transform...") },
                 shape = RoundedCornerShape(12.dp),
-                maxLines = 6
+                maxLines = 6,
+                supportingText = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = "${input.length}/4000",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (input.length > 3500)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -574,18 +653,33 @@ fun PlaygroundCard(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Result",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Result",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            // Copy button
+                            IconButton(
+                                onClick = onCopyOutput,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy result",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Surface(
@@ -599,6 +693,13 @@ fun PlaygroundCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
+                        // Output char count
+                        Text(
+                            text = "${output.length} characters",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
             }

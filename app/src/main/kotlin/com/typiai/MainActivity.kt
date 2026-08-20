@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -49,7 +51,9 @@ fun TypiAIApp() {
                     Text(
                         text = when (currentRoute) {
                             Screen.Dashboard.route -> "Dashboard"
-                            Screen.Usage.route -> "Usage"
+                            Screen.Usage.route     -> "Usage"
+                            Screen.History.route   -> "History"
+                            Screen.Settings.route  -> "Settings"
                             else -> "TypiAI"
                         },
                         style = MaterialTheme.typography.titleLarge
@@ -68,7 +72,9 @@ fun TypiAIApp() {
                     val isSelected = currentRoute == screen.route
                     val icon: ImageVector = when (screen) {
                         Screen.Dashboard -> Icons.Default.Dashboard
-                        Screen.Usage -> Icons.Default.BarChart
+                        Screen.Usage     -> Icons.Default.BarChart
+                        Screen.History   -> Icons.Default.History
+                        Screen.Settings  -> Icons.Default.Settings
                     }
                     NavigationBarItem(
                         selected = isSelected,

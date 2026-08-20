@@ -1,11 +1,13 @@
 package com.typiai.viewmodel
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.typiai.accessibility.TypiAccessibilityService
 import com.typiai.domain.GeminiResult
 import com.typiai.domain.TriggerCommand
 import com.typiai.repository.TypiRepository
@@ -62,19 +64,31 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
-        val serviceName = "${context.packageName}/${com.typiai.accessibility.TypiAccessibilityService::class.java.canonicalName}"
-        val accessibilityEnabled = try {
-            Settings.Secure.getInt(context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED)
-        } catch (e: Exception) { 0 }
+        // Build the ComponentName the exact same way Android stores it internally.
+        // Using ComponentName avoids the manual string construction bug where
+        // "pkg/fully.qualified.ClassName" differs from what Android writes into
+        // ENABLED_ACCESSIBILITY_SERVICES (which uses the short/relative class name).
+        val serviceComponent = ComponentName(
+            context.packageName,
+            TypiAccessibilityService::class.java.name
+        )
 
-        if (accessibilityEnabled == 1) {
-            val settingValue = Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: ""
-            return settingValue.split(':').any { it.equals(serviceName, ignoreCase = true) }
+        // Also check using flattenToShortString() which Android sometimes uses
+        // e.g. "com.typiai/.accessibility.TypiAccessibilityService"
+        val flatFull  = serviceComponent.flattenToString()       // com.typiai/com.typiai.accessibility.TypiAccessibilityService
+        val flatShort = serviceComponent.flattenToShortString()  // com.typiai/.accessibility.TypiAccessibilityService
+
+        val enabledList = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        return enabledList.split(':').any { entry ->
+            entry.equals(flatFull, ignoreCase = true) ||
+            entry.equals(flatShort, ignoreCase = true) ||
+            // Defensive: also match by resolving back to a ComponentName
+            ComponentName.unflattenFromString(entry)?.equals(serviceComponent) == true
         }
-        return false
     }
 
     fun openAccessibilitySettings(context: Context) {
@@ -178,6 +192,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearPlayground() {
         _uiState.update { it.copy(playgroundInput = "", playgroundOutput = "", playgroundError = null) }
+    }
+
+    fun showSnackbar(message: String) {
+        _uiState.update { it.copy(snackbarMessage = message) }
     }
 
     fun clearSnackbar() {

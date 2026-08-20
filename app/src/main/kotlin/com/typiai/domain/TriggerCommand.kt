@@ -10,84 +10,123 @@ enum class TriggerCommand(
     val title: String,
     val description: String,
     val prompt: String,
-    val iconName: String
+    val iconName: String,
+    /** Gemini temperature (0.0–2.0). Lower = more deterministic / less creative. */
+    val temperature: Double = 0.3,
+    /** Max output tokens for this command. */
+    val maxTokens: Int = 1024,
+    /** Optional system instruction sent separately for better instruction following. */
+    val systemInstruction: String = ""
 ) {
     FIX(
         trigger = "@fix",
         title = "Fix Grammar",
         description = "Fixes grammar and spelling errors",
-        prompt = "Fix the grammar, spelling, and punctuation in the following text. Return only the corrected text without any explanation:\n\n",
-        iconName = "spellcheck"
+        prompt = "Fix grammar and spelling. Keep the language natural. Return ONLY the fixed text.\n\n",
+        iconName = "spellcheck",
+        temperature = 0.1,
+        maxTokens = 1024,
+        systemInstruction = "You are a proofreader. Fix only grammar and spelling mistakes. Do not rephrase or change the meaning. Output only the corrected text."
     ),
     EMOJI(
         trigger = "@emoji",
         title = "Add Emojis",
         description = "Adds relevant emojis to the text",
-        prompt = "Add relevant and expressive emojis to the following text to make it more engaging. Return only the text with emojis, no explanation:\n\n",
-        iconName = "emoji_emotions"
+        prompt = "Add relevant emojis to the following text. Return ONLY the text with emojis.\n\n",
+        iconName = "emoji_emotions",
+        temperature = 0.5,
+        maxTokens = 1024,
+        systemInstruction = "You add emojis to text. Keep all original words. Only insert relevant emojis. Output only the text with emojis added."
     ),
     TYPI(
         trigger = "@typi",
-        title = "Smart Rewrite",
-        description = "Intelligently rewrites and improves text",
-        prompt = "Intelligently rewrite and improve the following text for clarity, tone, and impact. Return only the improved text:\n\n",
-        iconName = "auto_fix_high"
+        title = "Smart Complete",
+        description = "Completes the thought or text naturally",
+        prompt = "Complete the thought or text in a natural way. Return ONLY the completed text.\n\n",
+        iconName = "auto_fix_high",
+        temperature = 0.7,
+        maxTokens = 1024,
+        systemInstruction = "You are a writing assistant. Complete the user's text naturally. Output only the completed text, nothing else."
     ),
     TRANSLATE(
         trigger = "@translate",
         title = "Translate",
         description = "Translates text to English",
-        prompt = "Translate the following text to English. If it is already in English, translate it to Spanish. Return only the translated text:\n\n",
-        iconName = "translate"
+        prompt = "Translate the text to perfect English. Return ONLY the translated text.\n\n",
+        iconName = "translate",
+        temperature = 0.2,
+        maxTokens = 1024,
+        systemInstruction = "You are a translator. Translate the given text to perfect English. Output only the translation."
     ),
     SUMM(
         trigger = "@summ",
         title = "Summarize",
         description = "Creates a concise summary",
-        prompt = "Summarize the following text concisely while preserving the key points. Return only the summary:\n\n",
-        iconName = "summarize"
+        prompt = "Summarize the text concisely. Return ONLY the summary.\n\n",
+        iconName = "summarize",
+        temperature = 0.3,
+        maxTokens = 512,
+        systemInstruction = "You are a summarizer. Write a brief, clear summary of the text. Output only the summary."
     ),
     POLITE(
         trigger = "@polite",
         title = "Make Polite",
         description = "Rewrites text in a formal, polite tone",
-        prompt = "Rewrite the following text in a polite, professional, and formal tone. Return only the rewritten text:\n\n",
-        iconName = "sentiment_satisfied"
+        prompt = "Make the text formal and polite. Return ONLY the revised text.\n\n",
+        iconName = "sentiment_satisfied",
+        temperature = 0.3,
+        maxTokens = 1024,
+        systemInstruction = "You rewrite text to be formal and polite. Keep the same meaning. Output only the revised text."
     ),
     CASUAL(
         trigger = "@casual",
         title = "Make Casual",
         description = "Rewrites text in a friendly, casual tone",
-        prompt = "Rewrite the following text in a casual, friendly, and conversational tone. Return only the rewritten text:\n\n",
-        iconName = "chat_bubble"
+        prompt = "Make the text friendly and casual. Return ONLY the revised text.\n\n",
+        iconName = "chat_bubble",
+        temperature = 0.5,
+        maxTokens = 1024,
+        systemInstruction = "You rewrite text to be friendly and casual. Keep the same meaning. Output only the revised text."
     ),
     EXPAND(
         trigger = "@expand",
         title = "Expand",
         description = "Expands text with more detail",
-        prompt = "Expand the following text by adding more detail, context, and supporting information while keeping the same tone. Return only the expanded text:\n\n",
-        iconName = "expand"
+        prompt = "Expand on the text, adding details and better vocabulary. Return ONLY the expanded text.\n\n",
+        iconName = "expand",
+        temperature = 0.6,
+        maxTokens = 2048,
+        systemInstruction = "You expand text by adding relevant details and richer vocabulary. Do not change the core message. Output only the expanded text."
     ),
     BULLET(
         trigger = "@bullet",
         title = "Bullet Points",
         description = "Converts text to bullet points",
-        prompt = "Convert the following text into clear, well-structured bullet points. Return only the bullet points:\n\n",
-        iconName = "format_list_bulleted"
+        prompt = "Format the main points as a bulleted list. Return ONLY the list.\n\n",
+        iconName = "format_list_bulleted",
+        temperature = 0.2,
+        maxTokens = 1024,
+        systemInstruction = "You convert text into bullet points. Extract the main points. Output only the bullet list."
     ),
     IMPROVE(
         trigger = "@improve",
         title = "Improve",
         description = "Improves overall quality of text",
-        prompt = "Improve the following text for better clarity, flow, and impact. Fix any issues and enhance the writing quality. Return only the improved text:\n\n",
-        iconName = "trending_up"
+        prompt = "Elevate the flow and vocabulary of the text. Return ONLY the improved text.\n\n",
+        iconName = "trending_up",
+        temperature = 0.4,
+        maxTokens = 1024,
+        systemInstruction = "You improve text by enhancing vocabulary and flow. Preserve the original meaning and length. Output only the improved text."
     ),
     REPHRASE(
         trigger = "@rephrase",
         title = "Rephrase",
         description = "Rephrases text differently",
-        prompt = "Rephrase the following text using different words while keeping the same meaning. Return only the rephrased text:\n\n",
-        iconName = "refresh"
+        prompt = "Say the text differently while keeping the original meaning. Return ONLY the rephrased text.\n\n",
+        iconName = "refresh",
+        temperature = 0.5,
+        maxTokens = 1024,
+        systemInstruction = "You rephrase text using different words while keeping the exact same meaning. Output only the rephrased text."
     );
 
     companion object {
