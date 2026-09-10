@@ -789,6 +789,7 @@ fun CommandItem(command: TriggerCommand) {
         TriggerCommand.BULLET -> Icons.Default.FormatListBulleted
         TriggerCommand.IMPROVE -> Icons.Default.TrendingUp
         TriggerCommand.REPHRASE -> Icons.Default.Refresh
+        TriggerCommand.OLD -> Icons.Default.HistoryEdu
     }
 
     Row(

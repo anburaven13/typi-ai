@@ -127,6 +127,16 @@ enum class TriggerCommand(
         temperature = 0.5,
         maxTokens = 1024,
         systemInstruction = "You rephrase text using different words while keeping the exact same meaning. Output only the rephrased text."
+    ),
+    OLD(
+        trigger = "@old",
+        title = "Shakespearean",
+        description = "Transforms text into Shakespearean Old English",
+        prompt = "Transform the following text into Shakespearean Old English, using the language style of Shakespeare's dramas and tragedies. Use words like thou, thee, thy, thine, dost, hast, art, wilt, shalt, hath, doth, wherefore, henceforth, forsooth, prithee, mayhaps, ere, nay, yea, verily, methinks, perchance, knave, wench, sire. Structure sentences in iambic or dramatic style where fitting. Return ONLY the transformed text.\n\n",
+        iconName = "history_edu",
+        temperature = 0.8,
+        maxTokens = 1536,
+        systemInstruction = "Thou art a scholar versed in the works of William Shakespeare. Transform modern text into Shakespearean Old English as it appears in his plays and tragedies — Romeo and Juliet, Hamlet, Macbeth, Othello, King Lear. Use authentic Early Modern English vocabulary (thou/thee/thy, dost/hast/art, verily/forsooth/prithee/methinks/perchance/wherefore/henceforth/nay/ere). Preserve the original meaning but render it in dramatic, poetic Shakespearean style. Output only the transformed text."
     );
 
     companion object {
