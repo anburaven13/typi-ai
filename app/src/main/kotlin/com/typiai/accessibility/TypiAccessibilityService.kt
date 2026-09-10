@@ -17,241 +17,274 @@ import com.typiai.domain.GeminiResult
 import com.typiai.domain.TriggerCommand
 import com.typiai.repository.TypiRepository
 import kotlinx.coroutines.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * TypiAccessibilityService
+ * TypiAccessibilityService  — v1.2  (threading fix)
  *
- * Monitors text input across all apps and intercepts TypiAI trigger commands
- * (@fix, @emoji, @typi, @translate, @summ, @polite, @casual, @expand,
- *  @bullet, @improve, @rephrase, @old).
+ * Root causes of "works once then stops" fixed in this version:
  *
- * Key fixes (v1.1):
- * ─────────────────
- * 1. Text extraction — reads BOTH event.text AND node.text so apps like
- *    WhatsApp/Telegram/Chrome (which don't populate event.text) are covered.
- * 2. isProcessing flag — now always reset in `finally`, including cancellation.
- * 3. Dedup key — cleared after successful apply so the same command can be
- *    reused after editing.
- * 4. Node snapshot — text is copied from the node immediately (before the
- *    debounce delay) so the node reference can be recycled safely.
- * 5. Service flags — FLAG_INCLUDE_NOT_IMPORTANT_VIEWS added so hidden/custom
- *    input views in apps like WhatsApp are covered.
- * 6. Separate node acquisition — we re-acquire the focused node AFTER the
- *    Gemini call completes (stale snapshot from the event is gone by then).
+ * BUG 1 — Missing @Volatile / AtomicBoolean on isProcessing
+ *   isProcessing was a plain Kotlin Boolean written on Dispatchers.IO but
+ *   read on the Main thread (onAccessibilityEvent). Without a memory barrier,
+ *   the Main thread CPU cache can hold a stale TRUE value indefinitely even
+ *   after the IO thread set it to false.  All subsequent events were silently
+ *   dropped because isProcessing appeared permanently true.
+ *   FIX: AtomicBoolean provides the required happens-before guarantee.
+ *
+ * BUG 2 — Cross-thread state mutation (isProcessing + lastProcessedKey)
+ *   withContext(Dispatchers.Main) ran applyResult() on the Main thread and
+ *   cleared lastProcessedKey there, while the finally{} block ran isProcessing
+ *   = false on Dispatchers.IO.  The two threads mutated shared state with no
+ *   synchronisation.
+ *   FIX: ENTIRE coroutine pipeline now runs on Main (serviceScope uses
+ *   Dispatchers.Main).  IO-bound work (Gemini HTTP call) is wrapped in its
+ *   own withContext(Dispatchers.IO) inside the repository/helper — where it
+ *   already is — so no extra wrapping is needed here.  All state reads and
+ *   writes happen on a single thread, eliminating every race.
+ *
+ * BUG 3 — ACTION_SET_TEXT re-triggers processing loop
+ *   When we called ACTION_SET_TEXT the target app fired a new
+ *   TYPE_VIEW_TEXT_CHANGED event containing the AI result text.  If that
+ *   event arrived after isProcessing was reset to false, scheduleProcessing
+ *   would start a new 500 ms debounce job.  500 ms later
+ *   processTextIfTriggered would run on the AI-result text, find no trigger,
+ *   and return — but the debounceJob slot was occupied for those 500 ms,
+ *   silently eating the user's next real keystroke burst.
+ *   FIX: We record the last text we injected (lastInjectedText) and skip
+ *   any event whose text matches it exactly, so the injection echo is
+ *   ignored without starting a debounce timer.
+ *
+ * Architecture after fix:
+ *   serviceScope  → Dispatchers.Main (single-threaded, matches callback thread)
+ *   Gemini/HTTP   → withContext(Dispatchers.IO) inside GeminiHelper (unchanged)
+ *   State vars    → all read/written on Main; AtomicBoolean as safety net
  */
 class TypiAccessibilityService : AccessibilityService() {
 
     companion object {
-        private const val TAG = "TypiAccessibility"
-        private const val DEBOUNCE_MS = 500L          // Reduced from 650ms for snappier feel
-        private const val MAX_TEXT_LENGTH = 4000
+        private const val TAG          = "TypiAccessibility"
+        private const val DEBOUNCE_MS  = 600L
+        private const val MAX_TEXT_LEN = 4000
     }
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // ── All coroutines run on Main so state mutations are single-threaded ────
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val mainHandler  = Handler(Looper.getMainLooper())
 
     private var debounceJob: Job? = null
-    private var lastProcessedKey: String = ""
-    private var isProcessing: Boolean = false
+
+    // AtomicBoolean as an extra safety net (reads on Main, but belt-and-suspenders)
+    private val isProcessing = AtomicBoolean(false)
+
+    // Dedup: prevents re-processing the same trigger text twice in a row
+    private var lastProcessedKey = ""
+
+    // Injection echo guard: skip events caused by our own ACTION_SET_TEXT
+    private var lastInjectedText = ""
 
     private val repository: TypiRepository by lazy { TypiRepository(applicationContext) }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Service lifecycle
+    // Lifecycle
     // ─────────────────────────────────────────────────────────────────────────
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        // Merge programmatic flags with what the XML config already declares.
-        // DO NOT fully replace serviceInfo — that would wipe the XML settings.
         val info = serviceInfo ?: AccessibilityServiceInfo()
-        info.apply {
-            eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_FOCUSED
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            // FLAG_RETRIEVE_INTERACTIVE_WINDOWS — read content from all windows
-            // FLAG_REQUEST_FILTER_KEY_EVENTS    — needed for key-event filtering
-            // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS  — catches custom/hidden input views
-            //   used by WhatsApp, Telegram, Chrome, etc.
-            flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
-                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            notificationTimeout = 100
-        }
+        info.eventTypes        = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                                 AccessibilityEvent.TYPE_VIEW_FOCUSED
+        info.feedbackType      = AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.flags             = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                                 AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS   or
+                                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        info.notificationTimeout = 100
         serviceInfo = info
-        Log.i(TAG, "TypiAI connected — Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+        Log.i(TAG, "TypiAI v1.2 connected — Android ${Build.VERSION.RELEASE} " +
+                   "(API ${Build.VERSION.SDK_INT})")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Event handling
+    // Event entry point  (always called on Main thread by the OS)
     // ─────────────────────────────────────────────────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
-        if (isProcessing) return
+        if (isProcessing.get()) return          // already handling a command
 
-        // ── Snapshot text immediately — BEFORE the debounce delay ────────────
-        // The event's source node will be recycled by Android shortly after
-        // this callback returns. We read the text NOW and pass the String.
-        //
-        // Priority: node.text (live value) > event.text (may be stale/empty
-        // in many third-party apps like WhatsApp, Telegram, Chrome).
-        val text = extractTextFromEvent(event)
-        if (text.isNullOrBlank() || text.length > MAX_TEXT_LENGTH) return
+        val text = extractText(event) ?: return
+        if (text.length > MAX_TEXT_LEN) return
+
+        // ── Injection echo guard ─────────────────────────────────────────────
+        // ACTION_SET_TEXT fires a TYPE_VIEW_TEXT_CHANGED event with the text
+        // we just wrote.  Skip it so we don't start a phantom debounce cycle.
+        if (text == lastInjectedText) {
+            lastInjectedText = ""   // consume the guard once
+            return
+        }
 
         scheduleProcessing(text)
     }
 
-    /**
-     * Reads text from the event, trying multiple sources so we work across
-     * as many apps as possible.
-     */
-    private fun extractTextFromEvent(event: AccessibilityEvent): String? {
-        // Source 1: live node text (most reliable — reflects actual field value)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Text extraction  — tries multiple sources for cross-app compatibility
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun extractText(event: AccessibilityEvent): String? {
+        // 1. Live node text — most reliable; reflects the actual field content.
+        //    Many modern apps (WhatsApp, Telegram, Chrome) don't fill event.text.
         try {
             val node = event.source
             if (node != null) {
-                val nodeText = node.text?.toString()
+                val t = node.text?.toString()
                 node.recycle()
-                if (!nodeText.isNullOrBlank()) return nodeText
+                if (!t.isNullOrBlank()) return t
             }
         } catch (_: Exception) {}
 
-        // Source 2: event.text list (fallback — populated by many standard views)
+        // 2. event.text[] list — standard views fill this; use as fallback.
         try {
-            val eventText = event.text?.firstOrNull()?.toString()
-            if (!eventText.isNullOrBlank()) return eventText
+            val t = event.text?.firstOrNull()?.toString()
+            if (!t.isNullOrBlank()) return t
         } catch (_: Exception) {}
 
         return null
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Debounce + dispatch
+    // Debounce  (runs on Main — no cross-thread issues)
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun scheduleProcessing(text: String) {
         debounceJob?.cancel()
         debounceJob = serviceScope.launch {
             delay(DEBOUNCE_MS)
-            processTextIfTriggered(text)
+            processIfTriggered(text)
         }
     }
 
-    private suspend fun processTextIfTriggered(text: String) {
-        val command = TriggerCommand.fromText(text) ?: return
+    // ─────────────────────────────────────────────────────────────────────────
+    // Core pipeline  (runs on Main after debounce)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private suspend fun processIfTriggered(text: String) {
+        val command   = TriggerCommand.fromText(text) ?: return
         val inputText = TriggerCommand.extractTextBefore(text, command)
 
         if (inputText.isBlank()) {
-            showToast("Type some text before using ${command.trigger}")
+            toast("Type some text before using ${command.trigger}")
             return
         }
 
-        // Dedup guard — prevent double-firing on the same keystroke burst.
-        // Key is cleared after successful apply so the user can re-run.
+        // Dedup guard
         val key = "$inputText::${command.trigger}"
         if (key == lastProcessedKey) return
-        lastProcessedKey = key
-        isProcessing = true
 
-        showToast("TypiAI: Processing ${command.trigger}…")
+        if (!isProcessing.compareAndSet(false, true)) return   // already locked
+
+        lastProcessedKey = key
+        toast("TypiAI: Processing ${command.trigger}…")
 
         try {
+            // repository.processText uses withContext(Dispatchers.IO) internally
             val result = repository.processText(inputText, command)
-            withContext(Dispatchers.Main) {
-                when (result) {
-                    is GeminiResult.Success -> {
-                        val applied = applyResult(result.text)
-                        if (!applied) {
-                            // Couldn't inject — show result + copy to clipboard
-                            copyToClipboardAndNotify(result.text)
-                        }
-                        // Clear dedup key so user can run the same command again
-                        lastProcessedKey = ""
-                    }
-                    is GeminiResult.Error -> {
-                        showToast("TypiAI Error: ${result.message}", long = true)
-                        Log.e(TAG, "Gemini error: ${result.message}")
-                        // Also clear key on error so user can retry
-                        lastProcessedKey = ""
-                    }
-                    else -> {}
+
+            when (result) {
+                is GeminiResult.Success -> {
+                    val applied = injectText(result.text)
+                    if (!applied) copyToClipboard(result.text)
+                    lastProcessedKey = ""   // allow re-running same command
                 }
+                is GeminiResult.Error -> {
+                    toast("TypiAI: ${result.message}", long = true)
+                    Log.e(TAG, "Gemini error: ${result.message}")
+                    lastProcessedKey = ""   // allow retry
+                }
+                else -> {}
             }
         } catch (e: CancellationException) {
-            Log.d(TAG, "Processing cancelled")
-            // Don't clear lastProcessedKey — cancelled = didn't finish
+            Log.d(TAG, "Cancelled")
+            throw e   // MUST re-throw CancellationException for coroutine machinery
         } catch (e: Exception) {
-            Log.e(TAG, "Processing error: ${e.message}")
-            showToast("TypiAI: An error occurred — please try again", long = true)
+            Log.e(TAG, "Error: ${e.message}")
+            toast("TypiAI: Something went wrong — please try again", long = true)
             lastProcessedKey = ""
         } finally {
-            // CRITICAL: always release the processing lock, even on cancellation
-            isProcessing = false
+            isProcessing.set(false)
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Apply result — re-acquires the focused node AFTER the Gemini call
-    // (the original event source is long gone by this point)
+    // Text injection  — three strategies, best → least reliable
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Returns true if the text was successfully injected into the target field. */
-    private fun applyResult(newText: String): Boolean {
-        // ── Strategy 1: focused node via input-focus API ──────────────────────
-        val focusNode = findFocusedEditText()
-        if (focusNode != null) {
-            val ok = attemptSetText(focusNode, newText)
-            if (ok) {
-                recycleNode(focusNode)
-                showToast("TypiAI: Done! ✓")
+    /**
+     * Returns true if the result was successfully written into a text field.
+     * Records [lastInjectedText] so the resulting change-event is ignored.
+     */
+    private fun injectText(newText: String): Boolean {
+        val node = findFocusedEditText()
+
+        // Strategy A — ACTION_SET_TEXT (API 21+, works on all our minSdk=30+)
+        if (node != null) {
+            if (setTextOnNode(node, newText)) {
+                lastInjectedText = newText      // arm echo guard
+                recycleNode(node)
+                toast("TypiAI: Done ✓")
                 return true
             }
 
-            // ── Strategy 2: clipboard paste (API 30–32 only) ─────────────────
+            // Strategy B — clipboard paste (API 30–32 only)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                val pasted = useClipboardPaste(focusNode, newText)
-                recycleNode(focusNode)
-                return pasted
+                val ok = clipboardPaste(node, newText)
+                recycleNode(node)
+                if (ok) {
+                    lastInjectedText = newText
+                    return true
+                }
+            } else {
+                recycleNode(node)
             }
-            recycleNode(focusNode)
         }
 
-        // ── Strategy 3: root window depth-first search ────────────────────────
-        val rootNode = rootInActiveWindow
-        if (rootNode != null) {
-            val editNode = findEditableNode(rootNode)
+        // Strategy C — root-window depth-first search
+        val root = rootInActiveWindow
+        if (root != null) {
+            val editNode = findEditableNode(root)
+            recycleNode(root)
             if (editNode != null) {
-                val ok = attemptSetText(editNode, newText)
+                val ok = setTextOnNode(editNode, newText)
                 recycleNode(editNode)
-                recycleNode(rootNode)
                 if (ok) {
-                    showToast("TypiAI: Done! ✓")
+                    lastInjectedText = newText
+                    toast("TypiAI: Done ✓")
                     return true
                 }
             }
-            recycleNode(rootNode)
         }
 
         return false
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Strategy 1 — ACTION_SET_TEXT (API 21+; works on all our minSdk=30+)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private fun attemptSetText(node: AccessibilityNodeInfo, newText: String): Boolean {
+    private fun setTextOnNode(node: AccessibilityNodeInfo, text: String): Boolean {
         return try {
             if (!node.isEditable) return false
             val args = Bundle().apply {
                 putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    newText
-                )
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
             val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (ok) moveCursorToEnd(node, newText.length)
+            if (ok) {
+                // Move cursor to end
+                try {
+                    val sel = Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, text.length)
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,   text.length)
+                    }
+                    node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+                } catch (_: Exception) {}
+            }
             ok
         } catch (e: Exception) {
             Log.w(TAG, "ACTION_SET_TEXT failed: ${e.message}")
@@ -259,34 +292,19 @@ class TypiAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun moveCursorToEnd(node: AccessibilityNodeInfo, length: Int) {
-        try {
-            val args = Bundle().apply {
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, length)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, length)
-            }
-            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
-        } catch (_: Exception) { /* cursor placement is non-critical */ }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Strategy 2 — Clipboard + paste (API 30–32 only)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private fun useClipboardPaste(node: AccessibilityNodeInfo, newText: String): Boolean {
+    private fun clipboardPaste(node: AccessibilityNodeInfo, text: String): Boolean {
         return try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("TypiAI result", newText))
-
+            val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cb.setPrimaryClip(ClipData.newPlainText("TypiAI", text))
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            val selArgs = Bundle().apply {
+            val sel = Bundle().apply {
                 putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, Int.MAX_VALUE)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,   Int.MAX_VALUE)
             }
-            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
-            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            if (pasted) showToast("TypiAI: Done! ✓")
-            pasted
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+            val ok = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (ok) toast("TypiAI: Done ✓ (via clipboard)")
+            ok
         } catch (e: Exception) {
             Log.e(TAG, "Clipboard paste failed: ${e.message}")
             false
@@ -294,47 +312,43 @@ class TypiAccessibilityService : AccessibilityService() {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Strategy 3 — clipboard + notify user (API 33+, no background write)
+    // Clipboard fallback when injection fails entirely
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun copyToClipboardAndNotify(text: String) {
+    private fun copyToClipboard(text: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             try {
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("TypiAI result", text))
-                showToast("TypiAI: Result copied — long-press to paste", long = true)
-            } catch (e: Exception) {
-                showToast("TypiAI result: $text", long = true)
+                val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cb.setPrimaryClip(ClipData.newPlainText("TypiAI", text))
+                toast("TypiAI: Copied — long-press field to paste", long = true)
+            } catch (_: Exception) {
+                toast("TypiAI result: $text", long = true)
             }
         } else {
-            // Android 13+: background clipboard write is silently dropped.
-            // Best we can do is show the text; user can copy it from the toast.
-            showToast("TypiAI: $text", long = true)
+            // Android 13+: background clipboard writes are silently dropped
+            toast("TypiAI result:\n$text", long = true)
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Node helpers
+    // Node finding
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun findFocusedEditText(): AccessibilityNodeInfo? {
         return try {
             val root = rootInActiveWindow ?: return null
-            // Fast path: input-focus API
-            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (focused != null && focused.isEditable) {
-                recycleNode(root)
-                return focused
-            }
-            recycleNode(focused)
-            // Slow path: accessibility-focus API
-            val a11yFocused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-            if (a11yFocused != null && a11yFocused.isEditable) {
-                recycleNode(root)
-                return a11yFocused
-            }
-            recycleNode(a11yFocused)
-            // Depth-first search as last resort
+
+            // Try input-focus first (fastest)
+            val inp = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (inp != null && inp.isEditable) { recycleNode(root); return inp }
+            recycleNode(inp)
+
+            // Try accessibility-focus (some apps only register this)
+            val a11y = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+            if (a11y != null && a11y.isEditable) { recycleNode(root); return a11y }
+            recycleNode(a11y)
+
+            // Depth-first fallback
             val found = findEditableNode(root)
             recycleNode(root)
             found
@@ -350,7 +364,6 @@ class TypiAccessibilityService : AccessibilityService() {
             val child = node.getChild(i) ?: continue
             val found = findEditableNode(child)
             if (found != null) {
-                // Recycle intermediate children that weren't returned
                 if (found !== child) recycleNode(child)
                 return found
             }
@@ -368,25 +381,22 @@ class TypiAccessibilityService : AccessibilityService() {
         try { node?.recycle() } catch (_: Exception) {}
     }
 
-    private fun showToast(message: String, long: Boolean = false) {
+    private fun toast(msg: String, long: Boolean = false) {
         mainHandler.post {
-            Toast.makeText(
-                applicationContext,
-                message,
-                if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(applicationContext, msg,
+                if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onInterrupt() {
-        Log.w(TAG, "Accessibility service interrupted")
+        Log.w(TAG, "Service interrupted")
         debounceJob?.cancel()
-        isProcessing = false
+        isProcessing.set(false)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        Log.i(TAG, "Accessibility service destroyed")
+        Log.i(TAG, "Service destroyed")
     }
 }
