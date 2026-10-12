@@ -1,18 +1,26 @@
-name: Build Debug APK
+name: Build & Release APK
 
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Build Debug APK
+  build-and-release:
+    name: Build APK and Publish Production Release
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -26,12 +34,57 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v1.0.${{ github.run_number }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using release tag: $TAG"
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
-      - name: Upload Debug APK
+      - name: Prepare Release APK Asset
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "Error: No APK file found!"
+            exit 1
+          fi
+          echo "Found APK: $APK_FILE"
+          cp "$APK_FILE" "TypiAI-${TAG}.apk"
+          echo "Created release asset: TypiAI-${TAG}.apk"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          name: TypiAI-${{ steps.vars.outputs.tag }}-apk
+          path: TypiAI-*.apk
+          retention-days: 14
+
+      - name: Publish Production Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "TypiAI ${{ steps.vars.outputs.tag }}"
+          body: |
+            ## TypiAI Production Release (${{ steps.vars.outputs.tag }})
+
+            ### 📦 Download & Installation
+            Download the attached `TypiAI-${{ steps.vars.outputs.tag }}.apk` below and install it directly on your Android phone (supports Android 11 through Android 15).
+
+            ### 🚀 Build Info
+            - **Commit**: `${{ github.sha }}`
+            - **Branch / Ref**: `${{ github.ref_name }}`
+            - **Type**: Production Release (`prerelease: false`)
+          draft: false
+          prerelease: false
+          files: TypiAI-*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
