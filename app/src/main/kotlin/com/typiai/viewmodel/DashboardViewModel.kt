@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 data class DashboardUiState(
     val apiKey: String = "",
     val isServiceEnabled: Boolean = false,
+    val isBatteryOptimizationIgnored: Boolean = false,
     val playgroundInput: String = "",
     val playgroundOutput: String = "",
     val playgroundLoading: Boolean = false,
@@ -29,7 +30,7 @@ data class DashboardUiState(
     val apiKeyTestResult: String? = null,
     val isTestingApiKey: Boolean = false,
     val snackbarMessage: String? = null,
-    val currentModel: String = "gemini-2.5-flash"
+    val currentModel: String = "gemini-3.7-flash"
 )
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
@@ -96,6 +97,29 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         context.startActivity(intent)
+    }
+
+    fun updateBatteryOptimizationStatus(context: Context) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val ignored = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+        _uiState.update { it.copy(isBatteryOptimizationIgnored = ignored) }
+    }
+
+    fun requestDisableBatteryOptimization(context: Context) {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {}
+        }
     }
 
     fun updateApiKeyInput(key: String) {

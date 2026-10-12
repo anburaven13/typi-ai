@@ -23,6 +23,7 @@
     <!-- ── Networking ──────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- ── Accessibility (system-only permission) ───────────────────────────
          tools:ignore prevents the "ProtectedPermissions" lint warning; the

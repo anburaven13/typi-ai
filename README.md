@@ -10,8 +10,8 @@ TypiAI uses Google Gemini AI and Android's Accessibility API to intercept trigge
 
 | Feature | Detail |
 |---|---|
-| **11 AI commands** | `@fix` `@emoji` `@typi` `@translate` `@summ` `@polite` `@casual` `@expand` `@bullet` `@improve` `@rephrase` |
-| **Latest Gemini model** | Auto-selects from priority list: `gemini-2.5-flash → gemini-2.0-flash → gemini-1.5-flash` |
+| **12 AI commands** | `@fix` `@emoji` `@typi` `@translate` `@summ` `@polite` `@casual` `@expand` `@bullet` `@improve` `@rephrase` `@old` |
+| **Latest Gemini model** | Auto-selects from priority list: `gemini-3.7-flash → 3.6 → 3.5 → 2.5 → 2.0 → 1.5 Flash → Gemma 4` |
 | **Retry with backoff** | Exponential backoff on 429 / 503 errors; automatic model fallback on 404 |
 | **Secure key storage** | API key obfuscated in DataStore; never logged |
 | **Material Design 3** | Dynamic color (Android 12+), dark mode, rounded cards, smooth animations |
@@ -100,6 +100,24 @@ adb install app/build/outputs/apk/debug/TypiAI-debug-1.0.0.apk
 | `@bullet` | Convert to bullet-point list | `First do A then B then C @bullet` |
 | `@improve` | Improve clarity, flow & impact | `Draft text @improve` |
 | `@rephrase` | Rephrase with different words | `Same meaning @rephrase` |
+| `@old` | Transform to Shakespearean Old English | `Where are you going @old` |
+
+### 🧠 Exact Prompts & System Instructions Used in Code
+
+| Command | System Instruction | Injected Prompt Prefix | Temp | Max Tokens |
+|---|---|---|---|---|
+| **`@fix`** | You are a proofreader. Fix only grammar and spelling mistakes. Do not rephrase or change the meaning. Output only the corrected text. | Fix grammar and spelling. Keep the language natural. Return ONLY the fixed text.\n\n | 0.1 | 1024 |
+| **`@emoji`** | You add emojis to text. Keep all original words. Only insert relevant emojis. Output only the text with emojis added. | Add relevant emojis to the following text. Return ONLY the text with emojis.\n\n | 0.5 | 1024 |
+| **`@typi`** | You are a writing assistant. Complete the user's text naturally. Output only the completed text, nothing else. | Complete the thought or text in a natural way. Return ONLY the completed text.\n\n | 0.7 | 1024 |
+| **`@translate`** | You are a translator. Translate the given text to perfect English. Output only the translation. | Translate the text to perfect English. Return ONLY the translated text.\n\n | 0.2 | 1024 |
+| **`@summ`** | You are a summarizer. Write a brief, clear summary of the text. Output only the summary. | Summarize the text concisely. Return ONLY the summary.\n\n | 0.3 | 512 |
+| **`@polite`** | You rewrite text to be formal and polite. Keep the same meaning. Output only the revised text. | Make the text formal and polite. Return ONLY the revised text.\n\n | 0.3 | 1024 |
+| **`@casual`** | You rewrite text to be friendly and casual. Keep the same meaning. Output only the revised text. | Make the text friendly and casual. Return ONLY the revised text.\n\n | 0.5 | 1024 |
+| **`@expand`** | You expand text by adding relevant details and richer vocabulary. Do not change the core message. Output only the expanded text. | Expand on the text, adding details and better vocabulary. Return ONLY the expanded text.\n\n | 0.6 | 2048 |
+| **`@bullet`** | You convert text into bullet points. Extract the main points. Output only the bullet list. | Format the main points as a bulleted list. Return ONLY the list.\n\n | 0.2 | 1024 |
+| **`@improve`** | You improve text by enhancing vocabulary and flow. Preserve the original meaning and length. Output only the improved text. | Elevate the flow and vocabulary of the text. Return ONLY the improved text.\n\n | 0.4 | 1024 |
+| **`@rephrase`** | You rephrase text using different words while keeping the exact same meaning. Output only the rephrased text. | Say the text differently while keeping the original meaning. Return ONLY the rephrased text.\n\n | 0.5 | 1024 |
+| **`@old`** | Thou art a scholar versed in the works of William Shakespeare. Transform modern text into Shakespearean Old English as it appears in his plays and tragedies — Romeo and Juliet, Hamlet, Macbeth, Othello, King Lear. Use authentic Early Modern English vocabulary (thou/thee/thy, dost/hast/art, verily/forsooth/prithee/methinks/perchance/wherefore/henceforth/nay/ere). Preserve the original meaning but render it in dramatic, poetic Shakespearean style. Output only the transformed text. | Transform the following text into Shakespearean Old English, using the language style of Shakespeare's dramas and tragedies. Use words like thou, thee, thy, thine, dost, hast, art, wilt, shalt, hath, doth, wherefore, henceforth, forsooth, prithee, mayhaps, ere, nay, yea, verily, methinks, perchance, knave, wench, sire. Structure sentences in iambic or dramatic style where fitting. Return ONLY the transformed text.\n\n | 0.8 | 1536 |
 
 ---
 
@@ -148,12 +166,18 @@ com.typiai/
 
 ```kotlin
 private val MODEL_PRIORITY = listOf(
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
     "gemini-2.5-flash-preview-05-20",
     "gemini-2.0-flash",
     "gemini-2.0-flash-001",
+    "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-latest"
+    "gemini-1.5-flash-latest",
+    "gemma-4-26b-a4b-it",
+    "gemma-4-31b-it"
 )
 ```
 

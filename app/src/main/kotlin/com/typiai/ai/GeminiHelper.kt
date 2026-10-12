@@ -20,15 +20,28 @@ class GeminiHelper(private val apiKey: String) {
     companion object {
         private const val TAG = "GeminiHelper"
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-        // Model priority list - tries from newest to fallback
+
+        // Model priority list: 3.7 -> 3.6 -> 3.5 -> 2.5 Flash -> 2.0 -> 1.5 Flash -> Gemma 4 Fallbacks
         private val MODEL_PRIORITY = listOf(
+            // 3.x Flash series
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            // 2.5 Flash series
             "gemini-2.5-flash",
             "gemini-2.5-flash-preview-05-20",
+            // 2.0 Flash series (older stable)
             "gemini-2.0-flash",
             "gemini-2.0-flash-001",
+            "gemini-2.0-flash-lite",
+            // 1.5 Flash series (older stable)
             "gemini-1.5-flash",
-            "gemini-1.5-flash-latest"
+            "gemini-1.5-flash-latest",
+            // Gemma 4 Fallbacks
+            "gemma-4-26b-a4b-it",
+            "gemma-4-31b-it"
         )
+
         private const val MAX_RETRIES = 3
         private const val BASE_DELAY_MS = 1000L
         private const val MAX_INPUT_LENGTH = 4000
@@ -42,7 +55,7 @@ class GeminiHelper(private val apiKey: String) {
         .addInterceptor { chain ->
             val request = chain.request()
             // Never log API key
-            Log.d(TAG, "Request to: ${request.url.encodedPath}")
+            Log.d(TAG, "Request to model: $currentModel, path: ${request.url.encodedPath}")
             chain.proceed(request)
         }
         .build()
@@ -63,26 +76,44 @@ class GeminiHelper(private val apiKey: String) {
             val startTime = System.currentTimeMillis()
 
             var lastError: GeminiResult.Error? = null
-            for (attempt in 0 until MAX_RETRIES) {
-                val result = tryRequest(inputText, attempt, command)
-                when (result) {
-                    is GeminiResult.Success -> {
-                        val elapsed = System.currentTimeMillis() - startTime
-                        return@withContext GeminiResult.Success(result.text, elapsed)
-                    }
-                    is GeminiResult.Error -> {
-                        lastError = result
-                        if (!result.isRetryable) return@withContext result
-                        if (attempt < MAX_RETRIES - 1) {
-                            val backoffDelay = BASE_DELAY_MS * (1L shl attempt)
-                            Log.w(TAG, "Retry attempt ${attempt + 1}, waiting ${backoffDelay}ms")
-                            delay(backoffDelay)
+
+            // Loop across models if 404 is encountered (no backoff delay for 404s)
+            while (true) {
+                var modelSwitched = false
+                for (attempt in 0 until MAX_RETRIES) {
+                    val result = tryRequest(inputText, attempt, command)
+                    when (result) {
+                        is GeminiResult.Success -> {
+                            val elapsed = System.currentTimeMillis() - startTime
+                            return@withContext GeminiResult.Success(result.text, elapsed)
                         }
+                        is GeminiResult.Error -> {
+                            lastError = result
+                            if (!result.isRetryable) return@withContext result
+
+                            // If 404 switched to fallback model, immediately break to try next model with 0ms delay
+                            if (result.message.startsWith("Switching to model")) {
+                                modelSwitched = true
+                                break
+                            }
+
+                            // For 429 (rate limit) or 5xx (server error), wait with backoff
+                            if (attempt < MAX_RETRIES - 1) {
+                                val backoffDelay = BASE_DELAY_MS * (1L shl attempt)
+                                Log.w(TAG, "Retry attempt ${attempt + 1}, waiting ${backoffDelay}ms")
+                                delay(backoffDelay)
+                            }
+                        }
+                        else -> {}
                     }
-                    else -> {}
                 }
+
+                if (modelSwitched) {
+                    continue // Immediately try the newly switched model
+                }
+
+                return@withContext lastError ?: GeminiResult.Error("Unknown error occurred after retries")
             }
-            lastError ?: GeminiResult.Error("Unknown error after retries")
         }
 
     private suspend fun tryRequest(prompt: String, attempt: Int, command: TriggerCommand): GeminiResult {
@@ -100,7 +131,7 @@ class GeminiHelper(private val apiKey: String) {
                     200 -> parseSuccessResponse(response.body?.string() ?: "")
                     400 -> {
                         val errorBody = response.body?.string() ?: ""
-                        Log.e(TAG, "Bad request: $errorBody")
+                        Log.e(TAG, "Bad request ($currentModel): $errorBody")
                         GeminiResult.Error("Invalid request. Check your API key.", isRetryable = false)
                     }
                     401, 403 -> {
@@ -110,23 +141,23 @@ class GeminiHelper(private val apiKey: String) {
                         )
                     }
                     404 -> {
-                        // Model not found - try fallback
+                        // Model not found on this API endpoint / key - advance to next model immediately
                         val fallbackModel = getFallbackModel()
                         if (fallbackModel != null) {
-                            Log.w(TAG, "Model $currentModel not found, trying $fallbackModel")
+                            Log.w(TAG, "Model $currentModel not found (404), advancing to $fallbackModel")
                             currentModel = fallbackModel
-                            GeminiResult.Error("Switching to fallback model, please retry", isRetryable = true)
+                            GeminiResult.Error("Switching to model $fallbackModel", isRetryable = true)
                         } else {
-                            GeminiResult.Error("No available Gemini model found.", isRetryable = false)
+                            GeminiResult.Error("No available Gemini/Gemma models found.", isRetryable = false)
                         }
                     }
                     429 -> {
-                        Log.w(TAG, "Rate limited (429), will retry with backoff")
+                        Log.w(TAG, "Rate limited (429) on $currentModel, retrying with backoff")
                         GeminiResult.Error("Rate limit exceeded. Retrying...", isRetryable = true)
                     }
                     500, 503 -> {
-                        Log.w(TAG, "Server error ${response.code}, will retry")
-                        GeminiResult.Error("Gemini service temporarily unavailable.", isRetryable = true)
+                        Log.w(TAG, "Server error ${response.code} on $currentModel, retrying")
+                        GeminiResult.Error("AI service temporarily unavailable.", isRetryable = true)
                     }
                     else -> {
                         GeminiResult.Error(
@@ -146,46 +177,48 @@ class GeminiHelper(private val apiKey: String) {
     }
 
     private fun buildRequestBody(userText: String, command: TriggerCommand): String {
-        // System instruction sent separately; user content = command prompt + user text
+        val isGemma = currentModel.startsWith("gemma", ignoreCase = true)
         val systemInstruction = command.systemInstruction
-        val userContent = "${command.prompt}$userText"
 
-        val contents = if (systemInstruction.isNotBlank()) {
-            listOf(
-                mapOf(
-                    "role" to "user",
-                    "parts" to listOf(mapOf("text" to userContent))
-                )
-            )
+        // For Gemma open models, system instruction is prepended to the user turn prompt
+        val userContent = if (isGemma && systemInstruction.isNotBlank()) {
+            "${systemInstruction}\n\n${command.prompt}$userText"
         } else {
-            listOf(
-                mapOf(
-                    "parts" to listOf(mapOf("text" to userContent))
-                )
-            )
+            "${command.prompt}$userText"
         }
+
+        val contents = listOf(
+            mapOf(
+                "role" to "user",
+                "parts" to listOf(mapOf("text" to userContent))
+            )
+        )
+
+        val generationConfig = mutableMapOf<String, Any>(
+            "temperature" to command.temperature,
+            "topK" to 40,
+            "topP" to 0.95,
+            "maxOutputTokens" to command.maxTokens,
+            "candidateCount" to 1
+        )
 
         val body = mutableMapOf<String, Any>(
             "contents" to contents,
-            "generationConfig" to mapOf(
-                "temperature" to command.temperature,
-                "topK" to 40,
-                "topP" to 0.95,
-                "maxOutputTokens" to command.maxTokens,
-                "candidateCount" to 1
-            ),
-            "safetySettings" to listOf(
+            "generationConfig" to generationConfig
+        )
+
+        if (!isGemma) {
+            body["safetySettings"] = listOf(
                 mapOf("category" to "HARM_CATEGORY_HARASSMENT", "threshold" to "BLOCK_ONLY_HIGH"),
                 mapOf("category" to "HARM_CATEGORY_HATE_SPEECH", "threshold" to "BLOCK_ONLY_HIGH"),
                 mapOf("category" to "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" to "BLOCK_ONLY_HIGH"),
                 mapOf("category" to "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" to "BLOCK_ONLY_HIGH")
             )
-        )
-
-        if (systemInstruction.isNotBlank()) {
-            body["systemInstruction"] = mapOf(
-                "parts" to listOf(mapOf("text" to systemInstruction))
-            )
+            if (systemInstruction.isNotBlank()) {
+                body["systemInstruction"] = mapOf(
+                    "parts" to listOf(mapOf("text" to systemInstruction))
+                )
+            }
         }
 
         return gson.toJson(body)
@@ -203,7 +236,7 @@ class GeminiHelper(private val apiKey: String) {
                     val text = parts[0].asJsonObject.get("text")?.asString ?: ""
                     GeminiResult.Success(text.trim())
                 } else {
-                    GeminiResult.Error("Empty response from Gemini")
+                    GeminiResult.Error("Empty response from AI model")
                 }
             } else {
                 // Check for safety blocks

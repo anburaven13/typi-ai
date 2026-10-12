@@ -56,6 +56,7 @@ fun DashboardScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.updateServiceStatus(context)
+                viewModel.updateBatteryOptimizationStatus(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -89,10 +90,17 @@ fun DashboardScreen(
             // Service Status Card
             ServiceStatusCard(
                 isEnabled = uiState.isServiceEnabled,
+                isBatteryOptimizationIgnored = uiState.isBatteryOptimizationIgnored,
                 onEnableClick = {
                     viewModel.openAccessibilitySettings(context)
                 },
-                onRefresh = { viewModel.updateServiceStatus(context) }
+                onRequestBatteryOptimization = {
+                    viewModel.requestDisableBatteryOptimization(context)
+                },
+                onRefresh = {
+                    viewModel.updateServiceStatus(context)
+                    viewModel.updateBatteryOptimizationStatus(context)
+                }
             )
 
             // API Key Card
@@ -226,7 +234,9 @@ fun DashboardHeader(model: String) {
 @Composable
 fun ServiceStatusCard(
     isEnabled: Boolean,
+    isBatteryOptimizationIgnored: Boolean = true,
     onEnableClick: () -> Unit,
+    onRequestBatteryOptimization: () -> Unit = {},
     onRefresh: () -> Unit
 ) {
     val containerColor = if (isEnabled)
@@ -316,6 +326,30 @@ fun ServiceStatusCard(
                 ) {
                     StatusChip(text = "✓ Text Detection", color = contentColor)
                     StatusChip(text = "✓ Commands Ready", color = contentColor)
+                }
+
+                if (!isBatteryOptimizationIgnored) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = onRequestBatteryOptimization,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = contentColor
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BatteryChargingFull,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Disable Battery Saver (Prevents Sleep)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
