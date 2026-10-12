@@ -11,7 +11,7 @@ TypiAI uses Google Gemini AI and Android's Accessibility API to intercept trigge
 | Feature | Detail |
 |---|---|
 | **12 AI commands** | `@fix` `@emoji` `@typi` `@translate` `@summ` `@polite` `@casual` `@expand` `@bullet` `@improve` `@rephrase` `@old` |
-| **Latest Gemini model** | Auto-selects from priority list: `gemini-2.5-flash → 2.0 → 1.5 Flash → Gemma 4` |
+| **Latest Gemini model** | Auto-selects from priority list: `gemini-2.5-flash → 3.7 → 3.6 → 3.5 → 2.0 → 1.5 Flash → Gemma 4` |
 | **Retry with backoff** | Exponential backoff on 429 / 503 errors; automatic model fallback on 404 |
 | **Secure key storage** | API key obfuscated in DataStore; never logged |
 | **Material Design 3** | Dynamic color (Android 12+), dark mode, rounded cards, smooth animations |
@@ -168,6 +168,9 @@ com.typiai/
 private val MODEL_PRIORITY = listOf(
     "gemini-2.5-flash",
     "gemini-2.5-flash-preview-05-20",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-2.0-flash",
     "gemini-2.0-flash-001",
     "gemini-2.0-flash-lite",

@@ -21,11 +21,15 @@ class GeminiHelper(private val apiKey: String) {
         private const val TAG = "GeminiHelper"
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-        // Model priority list: gemini-2.5-flash is primary (fastest, production stable)
+        // Model priority list: 2.5 Flash is primary, followed by 3.x series, then 2.0/1.5 & Gemma fallbacks
         private val MODEL_PRIORITY = listOf(
-            // 2.5 Flash series (primary)
+            // 2.5 Flash series (primary - fastest, production stable)
             "gemini-2.5-flash",
             "gemini-2.5-flash-preview-05-20",
+            // 3.x Flash series (with thinkingConfig & x-goog-api-key support)
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
             // 2.0 Flash series (stable)
             "gemini-2.0-flash",
             "gemini-2.0-flash-001",
@@ -122,6 +126,7 @@ class GeminiHelper(private val apiKey: String) {
                 .url(url)
                 .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
                 .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -176,6 +181,7 @@ class GeminiHelper(private val apiKey: String) {
 
     private fun buildRequestBody(userText: String, command: TriggerCommand): String {
         val isGemma = currentModel.startsWith("gemma", ignoreCase = true)
+        val is3x = currentModel.startsWith("gemini-3", ignoreCase = true)
         val systemInstruction = command.systemInstruction
 
         // For Gemma open models, system instruction is prepended to the user turn prompt
@@ -193,12 +199,21 @@ class GeminiHelper(private val apiKey: String) {
         )
 
         val generationConfig = mutableMapOf<String, Any>(
-            "temperature" to command.temperature,
-            "topK" to 40,
-            "topP" to 0.95,
-            "maxOutputTokens" to command.maxTokens,
-            "candidateCount" to 1
+            "maxOutputTokens" to command.maxTokens
         )
+
+        if (is3x) {
+            // Gemini 3.x models use thinkingConfig. We set LOW thinkingLevel for fast text replacement latency.
+            generationConfig["thinkingConfig"] = mapOf(
+                "thinkingLevel" to "LOW",
+                "includeThoughts" to false
+            )
+        } else {
+            generationConfig["temperature"] = command.temperature
+            generationConfig["topK"] = 40
+            generationConfig["topP"] = 0.95
+            generationConfig["candidateCount"] = 1
+        }
 
         val body = mutableMapOf<String, Any>(
             "contents" to contents,
@@ -227,12 +242,26 @@ class GeminiHelper(private val apiKey: String) {
             val json = gson.fromJson(responseBody, JsonObject::class.java)
             val candidates = json.getAsJsonArray("candidates")
             if (candidates != null && candidates.size() > 0) {
-                val content = candidates[0].asJsonObject
-                    .getAsJsonObject("content")
-                val parts = content.getAsJsonArray("parts")
+                val content = candidates[0].asJsonObject.getAsJsonObject("content")
+                val parts = content?.getAsJsonArray("parts")
                 if (parts != null && parts.size() > 0) {
-                    val text = parts[0].asJsonObject.get("text")?.asString ?: ""
-                    GeminiResult.Success(text.trim())
+                    val sb = StringBuilder()
+                    for (i in 0 until parts.size()) {
+                        val part = parts[i].asJsonObject
+                        // Skip internal reasoning thoughts if emitted by 3.x models
+                        if (part.has("thought") && part.get("thought").asBoolean) continue
+                        val text = part.get("text")?.asString
+                        if (!text.isNullOrBlank()) {
+                            sb.append(text)
+                        }
+                    }
+                    val text = sb.toString().trim()
+                    if (text.isNotBlank()) {
+                        GeminiResult.Success(text)
+                    } else {
+                        val fallback = parts[0].asJsonObject.get("text")?.asString ?: ""
+                        GeminiResult.Success(fallback.trim())
+                    }
                 } else {
                     GeminiResult.Error("Empty response from AI model")
                 }
