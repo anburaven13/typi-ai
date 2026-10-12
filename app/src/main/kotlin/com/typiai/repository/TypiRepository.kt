@@ -84,5 +84,5 @@ class TypiRepository(private val context: Context) {
     suspend fun clearUsageData() = dataStore.clearAllData()
     suspend fun clearHistory() = dataStore.clearHistory()
 
-    fun getCurrentModel(): String = geminiHelper?.getCurrentModel() ?: "gemini-3.7-flash"
+    fun getCurrentModel(): String = geminiHelper?.getCurrentModel() ?: "gemini-2.5-flash"
 }

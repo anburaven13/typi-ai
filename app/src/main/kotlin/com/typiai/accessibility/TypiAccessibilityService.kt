@@ -12,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import com.typiai.domain.GeminiResult
 import com.typiai.domain.TriggerCommand
@@ -112,10 +113,21 @@ class TypiAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
             if (event == null) return
+
+            // Keep reference to focused input node whenever focus changes
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                event.source?.let { src ->
+                    if (isEditText(src)) {
+                        currentTargetNode = src
+                    }
+                }
+                return
+            }
+
             if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
             if (isProcessing.get()) return
 
-            // Capture the exact input node from the event
+            // Capture the exact input node from the text change event
             val source = event.source
             if (source != null) {
                 currentTargetNode = source
@@ -124,9 +136,9 @@ class TypiAccessibilityService : AccessibilityService() {
             val text = extractText(event) ?: return
             if (text.length > MAX_TEXT_LEN) return
 
-            // Injection echo guard with auto-expiry
+            // Injection echo guard with auto-expiry (matches full or trimmed injected string)
             val now = System.currentTimeMillis()
-            if (text == lastInjectedText && (now - lastInjectionTime) < ECHO_GUARD_TIMEOUT_MS) {
+            if ((text == lastInjectedText || text.trim() == lastInjectedText.trim()) && (now - lastInjectionTime) < ECHO_GUARD_TIMEOUT_MS) {
                 lastInjectedText = ""
                 return
             }
@@ -222,6 +234,7 @@ class TypiAccessibilityService : AccessibilityService() {
             lastProcessedKey = ""
         } finally {
             isProcessing.set(false)
+            currentTargetNode = null
         }
     }
 
@@ -230,61 +243,56 @@ class TypiAccessibilityService : AccessibilityService() {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun injectText(newText: String): Boolean {
-        // Strategy 1 — Direct node from event (the exact field the user typed in)
-        val directNode = currentTargetNode
-        if (directNode != null) {
-            try {
-                if (directNode.refresh() && setTextOnNode(directNode, newText)) {
-                    lastInjectedText = newText
-                    lastInjectionTime = System.currentTimeMillis()
-                    toast("TypiAI: Done ✓")
-                    return true
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Direct node injection failed: ${e.message}")
+        // Collect candidate editable nodes in priority order
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+
+        // Candidate 1: The exact node where the typing event occurred
+        currentTargetNode?.let { node ->
+            try { node.refresh() } catch (_: Exception) {}
+            candidates.add(node)
+        }
+
+        // Candidate 2: Currently focused editable node from active/application windows
+        findFocusedEditText()?.let { node ->
+            if (candidates.none { it == node }) {
+                candidates.add(node)
             }
         }
 
-        // Strategy 2 — Focused input lookup (active window + interactive windows)
-        val focusedNode = findFocusedEditText()
-        if (focusedNode != null) {
-            if (setTextOnNode(focusedNode, newText)) {
+        // Candidate 3: Any editable node in the active window hierarchy
+        rootInActiveWindow?.let { root ->
+            findFocusedEditableInTree(root)?.let { node ->
+                if (candidates.none { it == node }) candidates.add(node)
+            }
+            findAnyEditableInTree(root)?.let { node ->
+                if (candidates.none { it == node }) candidates.add(node)
+            }
+        }
+
+        // Try injection on candidate nodes in order
+        for (node in candidates) {
+            if (attemptInject(node, newText)) {
                 lastInjectedText = newText
                 lastInjectionTime = System.currentTimeMillis()
                 toast("TypiAI: Done ✓")
                 return true
             }
-
-            // Clipboard paste fallback on API 30–32
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                val ok = clipboardPaste(focusedNode, newText)
-                if (ok) {
-                    lastInjectedText = newText
-                    lastInjectionTime = System.currentTimeMillis()
-                    return true
-                }
-            }
         }
 
-        // Strategy 3 — Multi-window depth-first traversal
-        val allRoots = mutableListOf<AccessibilityNodeInfo>()
-        rootInActiveWindow?.let { allRoots.add(it) }
-        try {
-            for (window in windows) {
-                window.root?.let { if (!allRoots.contains(it)) allRoots.add(it) }
-            }
-        } catch (_: Exception) {}
+        return false
+    }
 
-        for (root in allRoots) {
-            val editableNode = findEditableNode(root)
-            if (editableNode != null) {
-                if (setTextOnNode(editableNode, newText)) {
-                    lastInjectedText = newText
-                    lastInjectionTime = System.currentTimeMillis()
-                    toast("TypiAI: Done ✓")
-                    return true
-                }
-            }
+    private fun attemptInject(node: AccessibilityNodeInfo, text: String): Boolean {
+        // Method A: ACTION_SET_TEXT (cleanest, direct programmatic replacement)
+        if (setTextOnNode(node, text)) {
+            return true
+        }
+
+        // Method B: In-place clipboard paste fallback
+        // Selects all existing text (0 to MAX_VALUE) and calls ACTION_PASTE so the old text is replaced
+        // Works on apps/WebViews that restrict or ignore ACTION_SET_TEXT
+        if (clipboardPaste(node, text)) {
+            return true
         }
 
         return false
@@ -292,12 +300,23 @@ class TypiAccessibilityService : AccessibilityService() {
 
     private fun setTextOnNode(node: AccessibilityNodeInfo, text: String): Boolean {
         return try {
+            // Ensure node has focus
+            if (!node.isFocused) {
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            }
+
             val args = Bundle().apply {
                 putCharSequence(
                     AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text
                 )
             }
-            val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            var ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            if (!ok) {
+                // Retry after explicit focus request
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }
+
             if (ok) {
                 try {
                     val sel = Bundle().apply {
@@ -318,15 +337,15 @@ class TypiAccessibilityService : AccessibilityService() {
         return try {
             val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cb.setPrimaryClip(ClipData.newPlainText("TypiAI", text))
+
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            // Select all text in the field so paste completely replaces it
             val sel = Bundle().apply {
                 putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
                 putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, Int.MAX_VALUE)
             }
             node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
-            val ok = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            if (ok) toast("TypiAI: Done ✓ (via clipboard)")
-            ok
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
         } catch (e: Exception) {
             Log.e(TAG, "Clipboard paste failed: ${e.message}")
             false
@@ -334,15 +353,11 @@ class TypiAccessibilityService : AccessibilityService() {
     }
 
     private fun copyToClipboard(text: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cb.setPrimaryClip(ClipData.newPlainText("TypiAI", text))
-                toast("TypiAI: Copied — long-press field to paste", long = true)
-            } catch (_: Exception) {
-                toast("TypiAI result: $text", long = true)
-            }
-        } else {
+        try {
+            val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cb.setPrimaryClip(ClipData.newPlainText("TypiAI", text))
+            toast("TypiAI: Copied — paste to replace", long = true)
+        } catch (_: Exception) {
             toast("TypiAI result:\n$text", long = true)
         }
     }
@@ -353,17 +368,20 @@ class TypiAccessibilityService : AccessibilityService() {
 
     private fun findFocusedEditText(): AccessibilityNodeInfo? {
         return try {
-            // 1. Try rootInActiveWindow
+            // 1. Check active window first
             val activeRoot = rootInActiveWindow
             if (activeRoot != null) {
-                findInHierarchy(activeRoot)?.let { return it }
+                findFocusedEditableInTree(activeRoot)?.let { return it }
             }
 
-            // 2. Iterate interactive windows
-            val windowList = windows
-            for (window in windowList) {
+            // 2. Iterate interactive windows (prioritize application windows)
+            val windowList = try { windows } catch (_: Exception) { emptyList() }
+            val sortedWindows = windowList.sortedByDescending {
+                if (it.type == AccessibilityWindowInfo.TYPE_APPLICATION) 2 else if (it.isFocused) 1 else 0
+            }
+            for (window in sortedWindows) {
                 val windowRoot = window.root ?: continue
-                findInHierarchy(windowRoot)?.let { return it }
+                findFocusedEditableInTree(windowRoot)?.let { return it }
             }
             null
         } catch (e: Exception) {
@@ -372,30 +390,62 @@ class TypiAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun findInHierarchy(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun findFocusedEditableInTree(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         return try {
+            // Check input focus
             val inp = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (inp != null) return inp
+            if (inp != null) {
+                if (isEditText(inp)) return inp
+                findFocusedEditableNode(inp)?.let { return it }
+                findAnyEditableInTree(inp)?.let { return it }
+            }
 
+            // Check accessibility focus
             val a11y = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-            if (a11y != null) return a11y
+            if (a11y != null) {
+                if (isEditText(a11y)) return a11y
+                findFocusedEditableNode(a11y)?.let { return it }
+                findAnyEditableInTree(a11y)?.let { return it }
+            }
 
-            findEditableNode(root)
+            // Search root tree for focused editable node
+            findFocusedEditableNode(root)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true) {
+    private fun findFocusedEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isFocused && isEditText(node)) {
             return node
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findEditableNode(child)
+            val found = findFocusedEditableNode(child)
             if (found != null) return found
         }
         return null
+    }
+
+    private fun findAnyEditableInTree(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (isEditText(node)) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findAnyEditableInTree(child)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun isEditText(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) return true
+        val className = node.className?.toString() ?: ""
+        return className.contains("EditText", ignoreCase = true) ||
+                className.contains("TextBox", ignoreCase = true) ||
+                className.contains("SearchAutoComplete", ignoreCase = true) ||
+                className.contains("AutoSuggest", ignoreCase = true)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

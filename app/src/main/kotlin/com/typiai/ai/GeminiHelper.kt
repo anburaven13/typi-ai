@@ -21,20 +21,16 @@ class GeminiHelper(private val apiKey: String) {
         private const val TAG = "GeminiHelper"
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-        // Model priority list: 3.7 -> 3.6 -> 3.5 -> 2.5 Flash -> 2.0 -> 1.5 Flash -> Gemma 4 Fallbacks
+        // Model priority list: gemini-2.5-flash is primary (fastest, production stable)
         private val MODEL_PRIORITY = listOf(
-            // 3.x Flash series
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            // 2.5 Flash series
+            // 2.5 Flash series (primary)
             "gemini-2.5-flash",
             "gemini-2.5-flash-preview-05-20",
-            // 2.0 Flash series (older stable)
+            // 2.0 Flash series (stable)
             "gemini-2.0-flash",
             "gemini-2.0-flash-001",
             "gemini-2.0-flash-lite",
-            // 1.5 Flash series (older stable)
+            // 1.5 Flash series (stable fallback)
             "gemini-1.5-flash",
             "gemini-1.5-flash-latest",
             // Gemma 4 Fallbacks

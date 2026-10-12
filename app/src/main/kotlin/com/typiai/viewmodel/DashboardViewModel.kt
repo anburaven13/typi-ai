@@ -30,7 +30,7 @@ data class DashboardUiState(
     val apiKeyTestResult: String? = null,
     val isTestingApiKey: Boolean = false,
     val snackbarMessage: String? = null,
-    val currentModel: String = "gemini-3.7-flash"
+    val currentModel: String = "gemini-2.5-flash"
 )
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
