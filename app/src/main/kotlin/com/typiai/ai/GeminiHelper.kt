@@ -112,8 +112,10 @@ class GeminiHelper(private val apiKey: String) {
                     continue // Immediately try the newly switched model
                 }
 
-                return@withContext lastError ?: GeminiResult.Error("Unknown error occurred after retries")
+                break
             }
+
+            lastError ?: GeminiResult.Error("Unknown error occurred after retries")
         }
 
     private suspend fun tryRequest(prompt: String, attempt: Int, command: TriggerCommand): GeminiResult {
